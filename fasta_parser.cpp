@@ -6,6 +6,8 @@
 #include <fstream>
 #include <vector>
 #include <map>
+#include <assert.h>
+#include <stdio.h>
 //#include <regex>
 
 using namespace std;
@@ -25,14 +27,14 @@ typedef struct condOpt{
 
 typedef struct ann_t{
     string contig;
-    int start;
-    int length;
+    long start;
+    long length;
     map<uint64_t,uint64_t> N_region;
 }Ann_t;
 
 typedef struct amb_t{;
-    int start;
-    int length;
+    long start;
+    long length;
     char C;
 }Amb_t;
 
@@ -136,8 +138,8 @@ int main(int argc, char* argv[]){
             if(split_string(string(input_buff), ann_line, " ")) {   //scan second line
                 Ann_t ann = {
                         .contig = ann_line[1],
-                        .start = stoi(ann_line[3]),
-                        .length = stoi(ann_line[4]),
+                        .start = stol(ann_line[3]),
+                        .length = stol(ann_line[4]),
                 };
                 ann_info.emplace_back(ann);
             }
@@ -151,8 +153,8 @@ int main(int argc, char* argv[]){
         input_amb.getline(input_buff, 512);
         if(split_string(string(input_buff), amb_line, " ")){   //scan first line
             Amb_t amb = {
-                    .start = stoi(amb_line[0]),
-                    .length = stoi(amb_line[1]),
+                    .start = stol(amb_line[0]),
+                    .length = stol(amb_line[1]),
                     .C = amb_line[2].c_str()[0],
             };
             amb_info.emplace_back(amb);
@@ -167,27 +169,34 @@ int main(int argc, char* argv[]){
     }
 
     //print parser messages
-    for(ann_t ann : ann_info){
-        cout<< ann.contig<<":"<<ann.start<<"~"<<ann.start+ann.length<<endl;
-        for(auto n: ann.N_region){
-            cout<<"\t"<<n.first<<"+"<<n.second<<endl;
-        }
-    }
+    cout<<"[Message]: success parse ann file, size:"<< ann_info.size() <<endl;
+
+//    for(ann_t ann : ann_info){
+//        cout<< ann.contig<<":"<<ann.start<<"~"<<ann.start+ann.length<<endl;
+//        for(auto n: ann.N_region){
+//            cout<<"\t"<<n.first<<"+"<<n.second<<endl;
+//        }
+//    }
 
     //read pac file
+    uint64_t id=1;
     for(ann_t ann : ann_info){
+        cout<<"[Message]: processe ann "<< id++ <<"/"<< ann_info.size() << "\tname: "<< ann.contig << "\tlength: "<< ann.length <<endl;
         output_fatsa << '>' + ann.contig << endl;
 
+        if(ann.length==0) continue; //skip this ann
         uint64_t pac_start_x = ann.start/4;
         uint64_t pac_start_y = ann.start%4; //pac offset
         //if pac_start_y!=0, pac need read one more byte
         uint64_t pac_length = pac_start_y?(ann.length-1)/4+2:(ann.length-1)/4+1;
 
-        char* pac_buff = (char*) malloc(pac_length);
-        char* dump_buff = (char*) malloc(pac_length*4);
-
+        char* pac_buff = (char*) calloc(pac_length, sizeof(char));
+        char* dump_buff = (char*) calloc(1+pac_length*4, sizeof(char));
+        assert(pac_buff!=nullptr);
+        assert(dump_buff!= nullptr);
         input_pac.seekg(pac_start_x);
         input_pac.read(pac_buff, pac_length );
+
 
         for(uint64_t i=0; i<pac_length; i++){
             dump_buff[4*i+0] = nst_dent4_table[(pac_buff[i]>>6)&0b11] ;
@@ -198,25 +207,29 @@ int main(int argc, char* argv[]){
         dump_buff[ann.length+pac_start_y]=0;    //cut the input_buff tail
         //print N region
         for(auto n: ann.N_region){
+            assert(pac_start_y+n.first+n.second<=pac_length*4);
             memset(dump_buff+pac_start_y+n.first,'N', n.second);
         }
 
         if(1){
             //output fa with strip 50
             char out_buff[51]={0};
-            for(uint64_t i=0; i<ann.length; i+=50){
+            uint64_t i=0;
+            for(i=0; i<ann.length-50; i+=50){
                 memcpy(out_buff, dump_buff+pac_start_y +i, 50);
                 output_fatsa<<out_buff<<endl;
             }
-            free(pac_buff);
-            free(dump_buff);
+            uint8_t lazy_dump_buff_size = ann.length+pac_start_y-i+1;
+            memcpy(out_buff, dump_buff+pac_start_y +i, lazy_dump_buff_size);
+            output_fatsa<<out_buff<<endl;
         } else {
             //output fa without strip
             output_fatsa<<dump_buff+pac_start_y<<endl;
             output_fatsa.write(dump_buff+pac_start_y, ann.length);
             output_fatsa<<endl;
         }
-
+        free(pac_buff);
+        free(dump_buff);
     }
 
     output_fatsa.close();
